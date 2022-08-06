@@ -1,0 +1,52 @@
+FROM debian:bullseye
+MAINTAINER M. Koehler (Martin.koehler@desy.de)
+LABEL version="1.0"
+ARG UID=<UID>
+ENV USER=<USER>
+
+# Set the time zone
+ENV TZ=Europe/Berlin
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > \
+        /etc/timezone
+
+# Install base packages 
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install\
+                              -y --no-install-recommends \
+xvfb xauth wget libnss3-tools \
+python3-pandas python3-openpyxl python3-xlrd \
+python3 pip gpg keyboard-configuration && \
+pip install undetected-chromedriver \
+pip install selenium-wire
+
+# Now  install chrome
+RUN echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main "  > /etc/apt/sources.list.d/google-chrome.list
+RUN wget -O- https://dl.google.com/linux/linux_signing_key.pub | \
+    gpg --dearmor > /etc/apt/trusted.gpg.d/google.gpg 
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install \
+                      -y --no-install-recommends \
+    google-chrome-stable\
+    && rm -rf /var/lib/apt/lists/*
+
+
+# For better developing
+#RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install \
+#                      -y --no-install-recommends vim-gtk \
+#    && rm -rf /var/lib/apt/lists/*
+
+# Create the user
+RUN useradd -m -u ${UID} -G sudo -s /bin/bash "${USER}" && passwd --delete "${USER}"
+WORKDIR /home/${USER}
+
+USER "${USER}"
+WORKDIR "/home/${USER}"
+
+# Install certificate
+RUN cd "/home/${USER}" && python3 -m seleniumwire extractcert \
+    && mkdir -p .pki/nssdb \
+    && certutil -d sql:/home/${USER}/.pki/nssdb -A -t TC -n "Selenium Wire" -i /home/${USER}/ca.crt && \
+    rm /home/${USER}/ca.crt 
+
+COPY --chown=${USER}:${USER} . /home/${USER}
+
+CMD ["/bin/bash"]
+
