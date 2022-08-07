@@ -188,15 +188,17 @@ class Scraper:
             return False
         res = decode(response.body, response.headers.get('Content-Encoding',
                                                           'identity'))
+        df = pd.read_excel(pd.ExcelFile(io.BytesIO(res)))
         del self.driver.requests # Make sure the next response is "new" again
+        logger.debug(f'{len(df)} exported')
         logger.debug("...done (export_record)")
-        return res
+        return df
 
     def get_data(self, doi):
         """
         Retrieve a doi and all records citing this doi
         Return a dataframe with the full WOS of all records, where the citing
-        records have the doi on their las column, called doi
+        records have the doi on their last column, called doi
         """
         logger.debug("Getting data ...")
         if self._search_doi(doi) is False:
@@ -205,12 +207,10 @@ class Scraper:
         df2 = pd.DataFrame()
         # Export record of this doi
         # response is the excel file
-        response = self._export_records()
-        if response:
-            df1 = pd.read_excel(pd.ExcelFile(io.BytesIO(response)))
-            df1["doi"] = "" # No entry here
-            logger.debug(f'{df1.last_valid_index()+1} records exported')
-            # Get citations
+        df1 = self._export_records()
+        if isinstance(df1, pd.DataFrame):
+            df1["citing_doi"] = "" # No entry here
+        # Get citations
         try:
             logger.debug("Try to get citations")
             url = self.driver.find_element(By.XPATH,
@@ -220,13 +220,10 @@ class Scraper:
                " 'Citation')]/../a").get_attribute("href")
             self.driver.get(url)
             logger.debug("Citation link found")
-            response = self._export_records()
-            if response:
-                df2 = pd.read_excel(pd.ExcelFile(io.BytesIO(response)))
+            df2 = self._export_records()
+            if isinstance(df2, pd.DataFrame):
                 # Insert doi of original here
-                df2["doi"] = [doi] * (df2.last_valid_index()+1)
-                logger.debug(f'{df2.last_valid_index()+1}' + \
-                             ' citation records exported')
+                df2["citing_doi"] = [doi] * (len(df2))
         except NoSuchElementException:
             logger.info(f'No citations found for {doi}')
         logger.debug("...done (get_data)")
@@ -237,10 +234,12 @@ def main(infile):
     """
     Read csv with DOIs and return excel object
     """
-    logger.info("TODO Entering main")
+    logger.info("Entering main")
     dois=pd.read_csv(infile, header=None, names=["doi"]) # No header in file
-    logger.debug(f'{dois.last_valid_index() +1} DOI\'s found')
+    logger.info(f'{len(dois)} DOI\'s found')
+    logger.info("Initializing ...")
     scapper = Scraper()
+    logger.info("... done")
     finaldf = pd.DataFrame() # Empty Dataframe
     # loop here
     for index,doi in dois.itertuples(index=True, name="doi"):
@@ -248,11 +247,11 @@ def main(infile):
         while True:
             try:
                 logger.info(f"Fetching data for doi: {doi}")
-                df = scapper.get_data( doi)
+                df = scapper.get_data(doi)
                 if isinstance(df, pd.DataFrame):
-                    finaldf = pd.concat([finaldf,df])
-                    print (df)
+                    logger.info(f'Got {len(df)} record(s)')
                     # concat all results
+                    finaldf = pd.concat([finaldf,df])
                 else:
                     logger.warning(f'Got no data for {doi}')
             except BaseException as err:
@@ -283,6 +282,9 @@ if __name__ == '__main__':
     else:
         log_level = logging.ERROR
     logger.setLevel(log_level)
-    logger.debug(f'Log level = {log_level}')
+    #logger.debug(f'Log level = {log_level}')
     result = main(args.infile)
+    logger.info(f'Creating {args.outfile} with '+ \
+                f'{len(result)}' + \
+                ' record(s)')
     result.to_excel(args.outfile)
